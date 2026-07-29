@@ -470,7 +470,7 @@ def fetch_subdomain_original(url: str) -> Optional[dict]:
     return None
 
 
-def populate_portales_from_sitemap(client: gspread.Client, sheet_url: str, max_resultados: int = 100) -> None:
+def populate_portales_from_sitemap(client: gspread.Client, sheet_url: str, max_resultados: int = 1000) -> None:
     """
     Original logic to fetch sitemap and update the Portales sheet.
     """
