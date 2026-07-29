@@ -206,6 +206,21 @@ def fetch_url_with_retry(url: str, max_retries: int = 3) -> Optional[str]:
     return None
 
 
+def extract_offer_id(url: str) -> Optional[str]:
+    """
+    Extracts the numeric offer ID from a job posting URL.
+    """
+    # Matches patterns like /trabajo/12345, /oferta/12345, /detalle-oferta/12345, etc.
+    match = re.search(r'/(?:trabajo|ofertas|oferta|empleo|detalle-oferta|detalle)/(\d+)', url, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    # Fallback to search any standalone number block of 6-8 digits
+    match_fallback = re.search(r'\b(\d{6,8})\b', url)
+    if match_fallback:
+        return match_fallback.group(1)
+    return None
+
+
 def scrape_portal(company_name: str, base_url: str) -> List[Dict]:
     """
     Scrapes a portal using multiple search suffixes and fallback strategies.
@@ -240,7 +255,9 @@ def scrape_portal(company_name: str, base_url: str) -> List[Dict]:
                         cargo = job.get('nombreCargo', '').strip()
                         pub_date = job.get('publicadoHace', '') or job.get('fechaPublicacion', '')
                         empresa = job.get('nombreEmpresa', company_name).strip()
-                        offer_url = f"{base_url}/trabajo/{offer_id}"
+                        
+                        # Generate the clean universal www.trabajando.cl URL
+                        offer_url = f"https://www.trabajando.cl/trabajo-empleo/empleo/trabajo/{offer_id}"
                         
                         if offer_url.lower() not in seen_urls:
                             seen_urls.add(offer_url.lower())
@@ -272,6 +289,11 @@ def scrape_portal(company_name: str, base_url: str) -> List[Dict]:
                     parent_text = a.parent.get_text(strip=True) if a.parent else ''
                     date_text = "hoy" if "hoy" in parent_text.lower() else ""
                     
+                    # Extract numeric ID to format as the clean universal URL
+                    offer_id = extract_offer_id(href)
+                    if offer_id:
+                        href = f"https://www.trabajando.cl/trabajo-empleo/empleo/trabajo/{offer_id}"
+                    
                     if href.lower() not in seen_urls:
                         seen_urls.add(href.lower())
                         scraped_offers.append({
@@ -282,6 +304,7 @@ def scrape_portal(company_name: str, base_url: str) -> List[Dict]:
                         })
                         
     return scraped_offers
+
 
 
 # --- EMAIL NOTIFICATION SYSTEM ---
@@ -445,7 +468,7 @@ def send_html_email(recipient_email: str, gmail_user: str, gmail_pass: str, offe
 
 def fetch_subdomain_original(url: str) -> Optional[dict]:
     """
-    Original helper to extract subdomains.
+    Original helper to extract subdomains, excluding test/demo portals.
     """
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -457,7 +480,12 @@ def fetch_subdomain_original(url: str) -> Optional[dict]:
                     match = re.search(r'https?://([a-zA-Z0-9.-]+)\.trabajando\.cl', href)
                     if match:
                         sub = match.group(1).lower()
+                        # Exclude static/system subdomains
                         if sub not in ['www', 'ayuda', 'personas', 'empresas', 'staticcdn']:
+                            # Exclude test, demo, testing, sandbox, and prototipo subdomains
+                            if any(x in sub for x in ['test', 'demo', 'prueba', 'prototipo', 'sandbox']):
+                                continue
+                            
                             h1 = soup.find('h1')
                             company_name = h1.text.strip() if h1 else sub.capitalize()
                             return {
@@ -472,11 +500,25 @@ def fetch_subdomain_original(url: str) -> Optional[dict]:
 
 def populate_portales_from_sitemap(client: gspread.Client, sheet_url: str, max_resultados: int = 1000) -> None:
     """
-    Original logic to fetch sitemap and update the Portales sheet.
+    Non-destructive logic to fetch sitemap and update the Portales sheet without deleting existing custom entries.
     """
     print("[*] Fetching company list from sitemap-empresas.xml...")
     sitemap_url = "https://www.trabajando.cl/sitemap-empresas.xml"
     
+    # Read existing portals from Google Sheets to avoid duplicates and preserve manual entries
+    existing_urls = set()
+    sheet = None
+    try:
+        sheet = client.open_by_url(sheet_url).worksheet("Portales")
+        existing_values = sheet.get_all_values()
+        if len(existing_values) > 1:
+            for row in existing_values[1:]:
+                if len(row) >= 2 and row[1].strip():
+                    existing_urls.add(row[1].strip().lower().rstrip('/'))
+            print(f"[+] Loaded {len(existing_urls)} existing portals from Sheets.")
+    except Exception as e:
+        print(f"[WARNING] Could not read existing portals from Sheet: {e}. Proceeding with fresh list.")
+
     try:
         r = requests.get(sitemap_url, headers=HEADERS, timeout=15)
         if r.status_code in [403, 429]:
@@ -492,10 +534,10 @@ def populate_portales_from_sitemap(client: gspread.Client, sheet_url: str, max_r
     soup = BeautifulSoup(r.text, 'xml')
     urls = [u.text for u in soup.find_all('loc')]
     total_urls = len(urls)
-    print(f"[+] Found {total_urls} empresas. Analyzing in parallel...")
+    print(f"[+] Found {total_urls} sitemap entries. Analyzing in parallel...")
     
     subdominios_vistos = set()
-    rows = []
+    new_rows = []
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_url = {executor.submit(fetch_subdomain_original, url): url for url in urls}
@@ -504,12 +546,15 @@ def populate_portales_from_sitemap(client: gspread.Client, sheet_url: str, max_r
             res = future.result()
             if res:
                 sub = res['subdomain']
-                if sub not in subdominios_vistos:
+                url_clean = res['url'].lower().rstrip('/')
+                
+                # Check both in-run duplicates and already logged URLs
+                if sub not in subdominios_vistos and url_clean not in existing_urls:
                     subdominios_vistos.add(sub)
-                    rows.append([res['name'], res['url']])
-                    print(f"[{len(rows)}] Found: {res['name']} -> {res['url']}")
+                    new_rows.append([res['name'], res['url']])
+                    print(f"[{len(new_rows)}] New discovered: {res['name']} -> {res['url']}")
                     
-                    if len(rows) >= max_resultados:
+                    if len(new_rows) >= max_resultados:
                         for f in future_to_url:
                             f.cancel()
                         break
@@ -517,16 +562,23 @@ def populate_portales_from_sitemap(client: gspread.Client, sheet_url: str, max_r
             if (idx + 1) % 50 == 0:
                 print(f"Progress: {idx + 1}/{total_urls} pages analyzed...")
                 
-    if not rows:
-        print("[-] No portals found or IP blocked.")
+    if not new_rows:
+        print("[+] No new portals found to add. Your sheet is already up to date.")
         return
         
-    print(f"\n[+] Found {len(rows)} portals. Writing to sheet...")
+    print(f"\n[+] Found {len(new_rows)} new portals. Appending to sheet...")
     try:
-        sheet = client.open_by_url(sheet_url).worksheet("Portales")
-        sheet.clear()
-        sheet.update(range_name='A1', values=[['Empresa', 'Links']] + rows)
-        print("[+] 'Portales' tab updated successfully!")
+        if sheet is None:
+            sheet = client.open_by_url(sheet_url).worksheet("Portales")
+        
+        # If the sheet was empty, write header first
+        if not existing_urls:
+            sheet.clear()
+            sheet.update(range_name='A1', values=[['Empresa', 'Links']] + new_rows)
+        else:
+            # Append new discovered portals to the end of the sheet
+            sheet.append_rows(new_rows)
+        print("[+] 'Portales' tab updated successfully without deleting manual entries!")
     except Exception as e:
         print(f"[-] Error writing to sheets: {e}")
 
