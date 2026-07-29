@@ -240,7 +240,7 @@ def scrape_portal(company_name: str, base_url: str) -> List[Dict]:
                         cargo = job.get('nombreCargo', '').strip()
                         pub_date = job.get('publicadoHace', '') or job.get('fechaPublicacion', '')
                         empresa = job.get('nombreEmpresa', company_name).strip()
-                        offer_url = f"https://www.trabajando.cl/ofertas/{offer_id}"
+                        offer_url = f"{base_url}/trabajo/{offer_id}"
                         
                         if offer_url.lower() not in seen_urls:
                             seen_urls.add(offer_url.lower())
