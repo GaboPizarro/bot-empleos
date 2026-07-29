@@ -655,11 +655,10 @@ def run_scraper_pipeline() -> None:
         date_text_lower = offer['date_text'].lower()
         
         # Criteria matches if:
-        # Title contains "analista" OR "consultor" OR date text contains "hoy"
+        # Title contains "analista" OR "consultor"
         keyword_match = any(kw in title_lower for kw in ALERT_KEYWORDS)
-        date_match = "hoy" in date_text_lower
         
-        if keyword_match or date_match:
+        if keyword_match:
             nuevas_ofertas.append(offer)
             new_urls_to_log.append(offer['url'])  # Keep exact original casing for history log
 

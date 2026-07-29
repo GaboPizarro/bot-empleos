@@ -5,9 +5,11 @@ on:
     # Executes daily at 09:00 and 15:00 CLT (Chile Standard Time, UTC-4)
     # 09:00 CLT -> 13:00 UTC
     # 15:00 CLT -> 19:00 UTC
-    # Note: During Chilean Summer Time (CLST, UTC-3), these will execute at 10:00 and 16:00 local time.
-    # Adjust to "0 12,18 * * *" for Summer Time if needed.
-    - cron: '0 13,19 * * *'
+    # Note: GitHub Actions cron triggers can be delayed by 1-2 hours at the top of the hour (minute 0).
+    # Running at minute 55 (e.g., 12:55 and 18:55 UTC) bypasses queue congestion, executing almost exactly on time.
+    # 08:55 CLT -> 12:55 UTC
+    # 14:55 CLT -> 18:55 UTC
+    - cron: '55 12,18 * * *'
   workflow_dispatch: # Allows manual trigger from the GitHub UI
 
 jobs:
