@@ -1,0 +1,18 @@
+# Sensitive keys and env files
+credenciales.json
+proyectoBot/credenciales.json
+.env
+proyectoBot/.env
+
+# Python build and cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+
+# IDE files
+.vscode/
+.idea/
